@@ -4,86 +4,111 @@
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
-use esp_hal::gpio::{Level, Output};
-use esp_hal::main;
+use esp_hal::{
+    main,
+    rmt::{Error, PulseCode, Rmt, TxChannel, TxChannelConfig, TxChannelCreator},
+    time::RateExtU32,
+};
 use log::info;
 
-use bitfield::bitfield;
+const T0H_NS: u32 = 400;
+const T0L_NS: u32 = 850;
+const T1H_NS: u32 = 800;
+const T1L_NS: u32 = 450;
+const CPU_FREQ_MHZ: u32 = 80;
+const T1H_CYCLE: u16 = (T1H_NS * CPU_FREQ_MHZ / 1000) as u16;
+const T1L_CYCLE: u16 = (T1L_NS * CPU_FREQ_MHZ / 1000) as u16;
+const T0H_CYCLE: u16 = (T0H_NS * CPU_FREQ_MHZ / 1000) as u16;
+const T0L_CYCLE: u16 = (T0L_NS * CPU_FREQ_MHZ / 1000) as u16;
 
-bitfield! {
-    pub struct RGB(u32);
-    impl Debug;
-    u8;
-    get_blue, set_blue: 7,0;
-    get_red, set_red: 15,8;
-    get_green, set_green: 23,16;
-    unused, set_unused: 24,31;
+#[derive(Debug, Clone, Copy)]
+enum Color {
+    Green,
+    Red,
+    Blue,
 }
 
-pub struct SK6812<'a> {
-    pin: Output<'a>,
-    delay: Delay,
-}
-
-impl<'a> SK6812<'a> {
-    pub fn new(pin: Output<'a>, delay: Delay) -> Self {
-        Self { pin, delay }
-    }
-    #[inline(always)]
-    fn send_bit(&mut self, bit: bool) {
-        if bit {
-            // T1H
-            self.pin.set_high();
-            self.delay.delay_nanos(1000);
-            self.pin.set_low();
-            self.delay.delay_nanos(500);
+// fill the data with patterns for the corresponding color
+fn create_pattern(color: Color, data: &mut [u32; 25]) {
+    let pattern = match color {
+        Color::Red => 0b000000001111111100000000,
+        Color::Green => 0b111111110000000000000000,
+        Color::Blue => 0b000000000000000011111111,
+    };
+    for (i, entry) in data.iter_mut().enumerate().take(24) {
+        let bit = (pattern >> (23 - i)) & 1u32;
+        let value: u32 = if bit == 1u32 {
+            PulseCode::new(true, T1H_CYCLE, false, T1L_CYCLE)
         } else {
-            self.pin.set_high();
-            self.delay.delay_nanos(400);
-            self.pin.set_low();
-            self.delay.delay_nanos(1100);
-        }
-    }
-
-    fn send_byte(&mut self, byte: u8) {
-        for i in (0..8).rev() {
-            self.send_bit(byte & (1 << i) != 0);
-        }
-    }
-
-    pub fn set_color(&mut self, red: u8, green: u8, blue: u8) {
-        self.send_byte(green);
-        self.send_byte(red);
-        self.send_byte(blue);
-        // Send Trst
-        self.pin.set_low();
-        self.delay.delay_micros(100);
+            PulseCode::new(true, T0H_CYCLE, false, T0L_CYCLE)
+        };
+        *entry = value;
     }
 }
 
-// Toggle the RGB lights controlled via GPIO48
 #[main]
 fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-
     esp_println::logger::init_logger_from_env();
-
     let delay = Delay::new();
-    //let mut rgb = RGB(0);
-    let led_pin = Output::new(peripherals.GPIO48, Level::Low);
-    let mut led = SK6812::new(led_pin, delay);
+
+    // create an instance of RMT peripheral
+    let rmt = Rmt::new(peripherals.RMT, CPU_FREQ_MHZ.MHz()).unwrap();
+
+    // Configure channel
+    let mut channel = rmt
+        .channel0
+        .configure(
+            peripherals.GPIO48,
+            TxChannelConfig {
+                clk_divider: 1,
+                idle_output_level: false,
+                idle_output: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    let mut data = [PulseCode::empty(); 25];
+    // end marker pattern is mandatory
+    data[data.len() - 1] = PulseCode::empty();
+
+    info!("Starting loop..");
+
+    let colors = [Color::Red, Color::Green, Color::Blue];
+    let mut index = 0;
     loop {
-        //set Red
-        led.set_color(255, 0, 0);
-        delay.delay_millis(1000);
-
-        //set Green
-        //led.set_color(0, 255, 0);
-        //delay.delay_millis(1000);
-
-        //set Blue
-        //led.set_color(0, 0, 255);
-        //delay.delay_millis(1000);
+        let color = colors[index];
+        info!("Color is {:?}", color);
+        create_pattern(color, &mut data);
+        // transmit consumes the channel
+        match channel.transmit(&data) {
+            Ok(transaction) => {
+                match transaction.wait() {
+                    Ok(reclaimed_channel) => {
+                        channel = reclaimed_channel;
+                        delay.delay_millis(2000);
+                        index = (index + 1) % colors.len();
+                    }
+                    Err((err, returned_channel)) => {
+                        // Handle specific transmission errors
+                        match err {
+                            Error::TransmissionError => info!("Transmission failed"),
+                            Error::EndMarkerMissing => info!("End marker missing"),
+                            Error::Overflow => info!("overflow"),
+                            Error::UnreachableTargetFrequency => {
+                                info!("UnreachableTargetFrequency")
+                            }
+                            Error::InvalidArgument => info!("InvalidArgument"),
+                        }
+                        channel = returned_channel;
+                    }
+                }
+            }
+            Err(e) => {
+                panic!("Failed to start transmission: {:?}", e);
+            }
+        }
     }
 }

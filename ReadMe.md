@@ -19,3 +19,4 @@ cargo run
 
 [1] <https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.0.html>  
 [2] <https://docs.esp-rs.org/book/installation/riscv-and-xtensa.html>
+[3] <https://www.rose-lighting.com/wp-content/uploads/sites/53/2020/05/SK68XX-MINI-HS-REV.04-EN23535RGB-thick.pdf>

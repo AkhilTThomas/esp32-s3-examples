@@ -10,16 +10,16 @@ path = "./src/blink.rs"
 [dependencies]
 bitfield = "0.17.0"
 critical-section = "1.2.0"
+
+esp-println = { version = "0.13.0", features = ["auto", "log"] }
 esp-backtrace = { version = "0.15.0", features = [
   "esp32s3",
   "exception-handler",
   "panic-handler",
   "println",
 ] }
+log = { version = "0.4.22" }
 esp-hal = { version = "0.23.1", features = ["esp32s3", "unstable"] }
-esp-println = { version = "0.13.0", features = ["esp32s3", "log"] }
-log = { version = "0.4.21" }
-
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
