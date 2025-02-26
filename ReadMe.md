@@ -4,6 +4,12 @@ Setting up and working with esp32-s3-devkitc-1
 
 - [Blink LED](src/blink.rs)
 
+### Wokwi demo
+
+https://wokwi.com/projects/420733216026365953  
+![esp32-s3-led](https://github.com/user-attachments/assets/c65d45be-e51d-4fc4-a533-dc20ca27dac7)
+
+
 ## Pre-requisties
 
 ```shell
